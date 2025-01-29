@@ -50,7 +50,7 @@ def resample_datapoints(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, calib_
     
     return X_trial, Xhat_trial, Xhat_unlabeled_trial, Y_trial, Yhat_trial, Yhat_unlabeled_trial
 
-def bootstrap_ppi(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, tune=True, quick_convolve=False, trials=100):
+def bootstrap_ppi(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, tune=True, quick_convolve=False, trials=100, alpha=0.05):
     p = X.shape[1]
     if tune:
         # bootstrap to get tuning matrix
@@ -90,8 +90,8 @@ def bootstrap_ppi(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, tune=True, q
             output = ppi_pointestimate(X_trial, Xhat_trial, Xhat_unlabeled_trial, Y_trial, Yhat_trial, Yhat_unlabeled_trial, tuning_matrix)
         outputs.append(output)
         
-    lo = np.percentile(outputs, 2.5, axis=0)
-    hi = np.percentile(outputs, 97.5, axis=0)
+    lo = np.percentile(outputs, 100*alpha/2, axis=0)
+    hi = np.percentile(outputs, 100*(1-alpha/2), axis=0)
     return (lo, hi)
 
 def classical_ols_ci(X, Y, alpha, alternative="two-sided"):
