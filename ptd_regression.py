@@ -13,17 +13,33 @@ HELPER FUNCTIONS
 def resample_datapoints(data_truth, data_pred, data_pred_unlabeled, w, w_unlabeled):
     '''
     Resamples datasets and weights with replacement (to be used in bootstrap step).
+    
+    Args:
+        data_truth (List[ndarray]): ground truth labeled data (each ndarray has n rows)
+        data_pred (List[ndarray]): predicted labeled data (each ndarray has n rows)
+        data_pred_unlabeled (List[ndarray]): predicted unlabeled data (each ndarray has N rows)
+        w (ndarray, optional): sample weights for labeled data (length n)
+        w_unlabeled (ndarray, optional): sample weights for unlabeled data (length N)
+        
+    Returns:
+        resampled version of each of the inputs
     '''
-    n = len(data_truth)
-    N = len(data_pred_unlabeled)
+    n = len(data_truth[0])
+    N = len(data_pred_unlabeled[0])
     resampled_indices = np.random.choice(np.arange(0, n+N), size=n+N, replace=True)
     
     calibration_indices = resampled_indices[resampled_indices < n]
-    data_truth_b = data_truth[calibration_indices]
-    data_pred_b = data_pred[calibration_indices]
+    data_truth_b = []
+    for data in data_truth:
+        data_truth_b.append(data[calibration_indices])
+    data_pred_b = []
+    for data in data_pred:
+        data_pred_b.append(data[calibration_indices])
     
     pred_indices = resampled_indices[resampled_indices >= n] - n
-    data_pred_unlabeled_b = data_pred_unlabeled[pred_indices]
+    data_pred_unlabeled_b = []
+    for data in data_pred_unlabeled:
+        data_pred_unlabeled_b.append(data[pred_indices])
     
     if w is None:
         w_b = None
@@ -34,7 +50,6 @@ def resample_datapoints(data_truth, data_pred, data_pred_unlabeled, w, w_unlabel
         w_unlabeled_b = None
     else:
         w_unlabeled_b = w_unlabeled[pred_indices]
-    
     
     return data_truth_b, data_pred_b, data_pred_unlabeled_b, w_b, w_unlabeled_b
 
@@ -48,9 +63,9 @@ def ptd_bootstrap(algorithm, data_truth, data_pred, data_pred_unlabeled, w=None,
     
     Args:
         algorithm: python function that takes in data and weights, and returns parameters of interest (e.g., a function that computes linear regression or logistic regression coefficients)
-        data_truth (ndarray): ground truth labeled data (dimensions n x p)
-        data_pred (ndarray): predicted labeled data (dimensions n x p)
-        data_pred_unlabeled (ndarray): predicted unlabeled data (dimensions N x p)
+        data_truth (List[ndarray]): ground truth labeled data (each ndarray has n rows)
+        data_pred (List[ndarray]): predicted labeled data (each ndarray has n rows)
+        data_pred_unlabeled (List[ndarray]): predicted unlabeled data (each ndarray has N rows)
         w (ndarray, optional): sample weights for labeled data (length n)
         w_unlabeled (ndarray, optional): sample weights for unlabeled data (length N)
         B (int, optional): number of bootstrap steps
@@ -62,7 +77,6 @@ def ptd_bootstrap(algorithm, data_truth, data_pred, data_pred_unlabeled, w=None,
         ndarray: PTD point estimate of the parameters of interest (length d)
         tuple: lower and upper bounds of PTD confidence intervals with (1-alpha) coverage
     """
-    
     coeff_calibration_list = []
     coeff_pred_calibration_list = []
     coeff_pred_unlabeled_list = []
@@ -118,8 +132,7 @@ LINEAR REGRESSION
 '''
 
 def algorithm_linear_regression(data, w):
-    X = data[:, :-1]
-    Y = data[:, -1]
+    X, Y = data
     if w is None:
         regression = WLS(endog=Y, exog=X).fit()
     else:
@@ -146,12 +159,12 @@ def ptd_linear_regression(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w=No
         
     Returns:
         ndarray: the tuning matrix (dimensions d x d) computed from the selected tuning method
-        ndarray: PTD point estimate of the parameters of interest (length d)
+        ndarray: PTD point estimate of the regression coefficients (length d)
         tuple: lower and upper bounds of PTD confidence intervals with (1-alpha) coverage
     """
-    data_truth = np.concatenate((X, Y), axis=1)
-    data_pred = np.concatenate((Xhat, Yhat), axis=1)
-    data_pred_unlabeled = np.concatenate((Xhat_unlabeled, Yhat_unlabeled), axis=1)
+    data_truth = [X, Y]
+    data_pred = [Xhat, Yhat]
+    data_pred_unlabeled = [Xhat_unlabeled, Yhat_unlabeled]
     return ptd_bootstrap(algorithm_linear_regression, data_truth, data_pred, data_pred_unlabeled, w=w, w_unlabeled=w_unlabeled, B=B, alpha=alpha, tuning_method=tuning_method)
 
 def classical_linear_regression_ci(X, Y, w=None, alpha=0.05):
