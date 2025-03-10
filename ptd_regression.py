@@ -10,132 +10,118 @@ from tqdm import tqdm
 HELPER FUNCTIONS
 '''
 
-def cross_cov(A, B):
-    '''
-    A is (p x n)
-    B is (p x n)
-    
-    Output: (p x p) cross-covariance matrix
-    '''
-    n = A.shape[1]
-    C = 1/(n-1) * (A-A.mean(axis=1)[:, np.newaxis]) @ (B-B.mean(axis=1)[:, np.newaxis]).T
-    return C
-
-def resample_datapoints(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w, w_unlabeled):
+def resample_datapoints(data_truth, data_pred, data_pred_unlabeled, w, w_unlabeled):
     '''
     Resamples datasets and weights with replacement (to be used in bootstrap step).
     '''
-    n = len(X)
-    N = len(Xhat_unlabeled)
+    n = len(data_truth)
+    N = len(data_pred_unlabeled)
     resampled_indices = np.random.choice(np.arange(0, n+N), size=n+N, replace=True)
     
     calibration_indices = resampled_indices[resampled_indices < n]
-    X_i = X[calibration_indices]
-    Xhat_i = Xhat[calibration_indices]
-    Y_i = Y[calibration_indices]
-    Yhat_i = Yhat[calibration_indices]
+    data_truth_b = data_truth[calibration_indices]
+    data_pred_b = data_pred[calibration_indices]
     
-    preds_indices = resampled_indices[resampled_indices >= n] - n
-    Xhat_unlabeled_i = Xhat_unlabeled[preds_indices]
-    Yhat_unlabeled_i = Yhat_unlabeled[preds_indices]
+    pred_indices = resampled_indices[resampled_indices >= n] - n
+    data_pred_unlabeled_b = data_pred_unlabeled[pred_indices]
     
     if w is None:
-        w_i = None
+        w_b = None
     else:
-        w_i = w[calibration_indices]
+        w_b = w[calibration_indices]
         
     if w_unlabeled is None:
-        w_unlabeled_i = None
+        w_unlabeled_b = None
     else:
-        w_unlabeled_i = w_unlabeled[preds_indices]
+        w_unlabeled_b = w_unlabeled[pred_indices]
     
     
-    return X_i, Xhat_i, Xhat_unlabeled_i, Y_i, Yhat_i, Yhat_unlabeled_i, w_i, w_unlabeled_i
+    return data_truth_b, data_pred_b, data_pred_unlabeled_b, w_b, w_unlabeled_b
 
 '''
 MAIN PTD BOOTSTRAP FUNCTION
 '''
 
-def ptd_bootstrap(algorithm, X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w=None, w_unlabeled=None, B=2000, alpha=0.05, tuning_method='optimal_diagonal'):
+def ptd_bootstrap(algorithm, data_truth, data_pred, data_pred_unlabeled, w=None, w_unlabeled=None, B=2000, alpha=0.05, tuning_method='optimal_diagonal'):
     """
     Computes tuning matrix, point estimates, and confidence intervals for regression coefficients using the Predict-then-Debias bootstrap algorithm from Kluger et al. (2025), 'Prediction-Powered Inference with Imputed Covariates and Nonuniform Sampling,' <https://arxiv.org/abs/2501.18577>.
     
     Args:
-        algorithm: python function that takes in (x, y) data and weights, and returns regression coefficients (e.g., linear regression or logistic regression function)
-        X (ndarray): ground truth covariates in labeled data (dimensions n x p)
-        Xhat (ndarray): predicted covariates in labeled data (dimensions n x p)
-        Xhat_unlabeled (ndarray): predicted covariates in unlabeled data (dimensions N x p)
-        Y (ndarray): ground truth response variable in labeled data (length n)
-        Yhat (ndarray): predicted response variable in labeled data (length n)
-        Yhat_unlabeled (ndarray): predicted response variable in unlabeled data (length N)
-        w (ndarray, optional): sample weights for the labeled dataset (length n)
-        w_unlabeled (ndarray, optional): sample weights for the unlabeled dataset (length N)
+        algorithm: python function that takes in data and weights, and returns parameters of interest (e.g., a function that computes linear regression or logistic regression coefficients)
+        data_truth (ndarray): ground truth labeled data (dimensions n x p)
+        data_pred (ndarray): predicted labeled data (dimensions n x p)
+        data_pred_unlabeled (ndarray): predicted unlabeled data (dimensions N x p)
+        w (ndarray, optional): sample weights for labeled data (length n)
+        w_unlabeled (ndarray, optional): sample weights for unlabeled data (length N)
         B (int, optional): number of bootstrap steps
         alpha (float, optional): error level (must be in the range (0, 1)). The PTD confidence interval will target a coverage of 1 - alpha. 
         tuning_method (str, optional): method used to create the tuning matrix: "optimal_diagonal", "optimal", or None. (If tuning_method is None, the identity matrix is used.) 
         
     Returns:
-        ndarray: the tuning matrix (dimensions p x p) computed from the selected tuning method
-        ndarray: PTD point estimate of the coefficients (length p)
-        tuple: lower and upper bounds of PTD coefficient confidence intervals with (1-alpha) coverage
+        ndarray: the tuning matrix (dimensions d x d) computed from the selected tuning method
+        ndarray: PTD point estimate of the parameters of interest (length d)
+        tuple: lower and upper bounds of PTD confidence intervals with (1-alpha) coverage
     """
-    p = X.shape[1]
     
     coeff_calibration_list = []
-    coeff_preds_calibration_list = []
-    coeff_preds_unlabeled_list = []
+    coeff_pred_calibration_list = []
+    coeff_pred_unlabeled_list = []
     
     # compute bootstrap coefficient estimates 
-    for i in range(B):
-        X_i, Xhat_i, Xhat_unlabeled_i, Y_i, Yhat_i, Yhat_unlabeled_i, w_i, w_unlabeled_i = resample_datapoints(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w, w_unlabeled)
+    for b in range(B):
+        data_truth_b, data_pred_b, data_pred_unlabeled_b, w_b, w_unlabeled_b = resample_datapoints(data_truth, data_pred, data_pred_unlabeled, w, w_unlabeled)
 
-        coeff_calibration = algorithm(X_i, Y_i, w_i)
+        coeff_calibration = algorithm(data_truth_b, w_b)
         coeff_calibration_list.append(coeff_calibration)
 
-        coeff_preds_calibration = algorithm(Xhat_i, Yhat_i, w_i)
-        coeff_preds_calibration_list.append(coeff_preds_calibration)
+        coeff_pred_calibration = algorithm(data_pred_b, w_b)
+        coeff_pred_calibration_list.append(coeff_pred_calibration)
         
-        coeff_preds_unlabeled = algorithm(Xhat_unlabeled_i, Yhat_unlabeled_i, w_unlabeled_i)
-        coeff_preds_unlabeled_list.append(coeff_preds_unlabeled)
+        coeff_pred_unlabeled = algorithm(data_pred_unlabeled_b, w_unlabeled_b)
+        coeff_pred_unlabeled_list.append(coeff_pred_unlabeled)
 
     coeff_calibration_list = np.array(coeff_calibration_list)
-    coeff_preds_calibration_list = np.array(coeff_preds_calibration_list)
-    coeff_preds_unlabeled_list = np.array(coeff_preds_unlabeled_list)
+    coeff_pred_calibration_list = np.array(coeff_pred_calibration_list)
+    coeff_pred_unlabeled_list = np.array(coeff_pred_unlabeled_list)
     
     # compute tuning matrix
+    d = coeff_calibration_list.shape[1]
     if tuning_method is None:
-        tuning_matrix = np.identity(p)
+        tuning_matrix = np.identity(d)
     else:
-        cross_cov_calibration = cross_cov(coeff_calibration_list.T, coeff_preds_calibration_list.T)
-        cov_preds_calibration = np.cov(coeff_preds_calibration_list.T)
-        cov_preds_unlabeled = np.cov(coeff_preds_unlabeled_list.T)
+        cross_cov_calibration = np.cov(np.concatenate((coeff_calibration_list.T, coeff_pred_calibration_list.T)))[:d, d:]
+        cov_pred_calibration = np.cov(coeff_pred_calibration_list.T)
+        cov_pred_unlabeled = np.cov(coeff_pred_unlabeled_list.T)
         if tuning_method == "optimal":
-            tuning_matrix = cross_cov_calibration @ np.linalg.inv(cov_preds_calibration + cov_preds_unlabeled)
+            tuning_matrix = cross_cov_calibration @ np.linalg.inv(cov_pred_calibration + cov_pred_unlabeled)
         elif tuning_method == "optimal_diagonal":
-            tuning_matrix = np.diag(np.diag(cross_cov_calibration)/(np.diag(cov_preds_calibration) + np.diag(cov_preds_unlabeled)))
+            tuning_matrix = np.diag(np.diag(cross_cov_calibration)/(np.diag(cov_pred_calibration) + np.diag(cov_pred_unlabeled)))
+            
+    # PTD point estimate
+    coeff_calibration = algorithm(data_truth, w)
+    coeff_pred_calibration = algorithm(data_pred, w)
+    coeff_pred_unlabeled = algorithm(data_pred_unlabeled, w_unlabeled)
+    ptd_pointestimate = coeff_pred_unlabeled @ tuning_matrix.T + (coeff_calibration - coeff_pred_calibration @ tuning_matrix.T)
     
-    # compute PTD point estimates using the bootstrap coefficient estimates and tuning matrix
-    pointestimates = []
-    for i in range(B):
-        coeff_calibration = coeff_calibration_list[i]
-        coeff_preds_calibration = coeff_preds_calibration_list[i]
-        coeff_preds_unlabeled = coeff_preds_unlabeled_list[i]
-        pointestimate = tuning_matrix @ coeff_preds_unlabeled + (coeff_calibration - tuning_matrix @ coeff_preds_calibration)
-        pointestimates.append(pointestimate)
-    
+    # PTD confidence interval
+    # compute B point estimates using the bootstrap coefficient estimates and tuning matrix 
+    pointestimates = coeff_pred_unlabeled_list @ tuning_matrix.T + (coeff_calibration_list - coeff_pred_calibration_list @ tuning_matrix.T)
     # compute lower and upper bounds for PTD confidence interval with (1-alpha) coverage
     lo = np.percentile(pointestimates, 100*alpha/2, axis=0)
     hi = np.percentile(pointestimates, 100*(1-alpha/2), axis=0)
-    
-    ptd_pointestimate = (lo+hi)/2
     ptd_ci = (lo, hi)
+    
+    print("DONE")
+    
     return tuning_matrix, ptd_pointestimate, ptd_ci
 
 '''
 LINEAR REGRESSION
 '''
 
-def algorithm_linear_regression(X, Y, w):
+def algorithm_linear_regression(data, w):
+    X = data[:, :-1]
+    Y = data[:, -1]
     if w is None:
         regression = WLS(endog=Y, exog=X).fit()
     else:
@@ -146,8 +132,29 @@ def algorithm_linear_regression(X, Y, w):
 def ptd_linear_regression(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w=None, w_unlabeled=None, B=2000, alpha=0.05, tuning_method='optimal_diagonal'):
     """
     Computes tuning matrix, point estimates, and confidence intervals for linear regression coefficients using the Predict-then-Debias bootstrap algorithm. 
+    
+    Args:
+        X (ndarray): ground truth covariates in labeled data (dimensions n x p)
+        Xhat (ndarray): predicted covariates in labeled data (dimensions n x p)
+        Xhat_unlabeled (ndarray): predicted covariates in unlabeled data (dimensions N x p)
+        Y (ndarray): ground truth response variable in labeled data (dimensions n x 1)
+        Yhat (ndarray): predicted response variable in labeled data (dimensions n x 1)
+        Yhat_unlabeled (ndarray): predicted response variable in unlabeled data (dimensions N x 1)
+        w (ndarray, optional): sample weights for labeled data (length n)
+        w_unlabeled (ndarray, optional): sample weights for unlabeled data (length N)
+        B (int, optional): number of bootstrap steps
+        alpha (float, optional): error level (must be in the range (0, 1)). The PTD confidence interval will target a coverage of 1 - alpha. 
+        tuning_method (str, optional): method used to create the tuning matrix: "optimal_diagonal", "optimal", or None. (If tuning_method is None, the identity matrix is used.) 
+        
+    Returns:
+        ndarray: the tuning matrix (dimensions d x d) computed from the selected tuning method
+        ndarray: PTD point estimate of the parameters of interest (length d)
+        tuple: lower and upper bounds of PTD confidence intervals with (1-alpha) coverage
     """
-    return ptd_bootstrap(algorithm_linear_regression, X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w=w, w_unlabeled=w_unlabeled, B=B, alpha=alpha, tuning_method=tuning_method)
+    data_truth = np.concatenate((X, Y), axis=1)
+    data_pred = np.concatenate((Xhat, Yhat), axis=1)
+    data_pred_unlabeled = np.concatenate((Xhat_unlabeled, Yhat_unlabeled), axis=1)
+    return ptd_bootstrap(algorithm_linear_regression, data_truth, data_pred, data_pred_unlabeled, w=w, w_unlabeled=w_unlabeled, B=B, alpha=alpha, tuning_method=tuning_method)
 
 def classical_linear_regression_ci(X, Y, w=None, alpha=0.05):
     """
