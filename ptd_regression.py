@@ -111,8 +111,6 @@ def ptd_bootstrap(algorithm, data_truth, data_pred, data_pred_unlabeled, w=None,
     hi = np.percentile(pointestimates, 100*(1-alpha/2), axis=0)
     ptd_ci = (lo, hi)
     
-    print("DONE")
-    
     return tuning_matrix, ptd_pointestimate, ptd_ci
 
 '''
