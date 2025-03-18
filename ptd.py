@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 from statsmodels.regression.linear_model import WLS, RegressionResults
 from statsmodels.stats.weightstats import _zconfint_generic
-from statsmodels.stats.sandwich_covariance import cov_hc0, cov_hc1, cov_hac
+from statsmodels.genmod.generalized_linear_model import GLM
+from statsmodels.genmod.families import Binomial
+from statsmodels.genmod.families.links import Logit
 import statsmodels
 from tqdm import tqdm
 
@@ -62,7 +64,7 @@ def ptd_bootstrap(algorithm, data_truth, data_pred, data_pred_unlabeled, w=None,
     Computes tuning matrix, point estimates, and confidence intervals for regression coefficients using the Predict-then-Debias bootstrap algorithm from Kluger et al. (2025), 'Prediction-Powered Inference with Imputed Covariates and Nonuniform Sampling,' <https://arxiv.org/abs/2501.18577>.
     
     Args:
-        algorithm: python function that takes in data and weights, and returns parameters of interest (e.g., a function that computes linear regression or logistic regression coefficients)
+        algorithm (function): python function that takes in data and weights, and returns array containing parameters of interest (e.g., a function that computes linear regression or logistic regression coefficients)
         data_truth (List[ndarray]): ground truth labeled data (each ndarray has n rows)
         data_pred (List[ndarray]): predicted labeled data (each ndarray has n rows)
         data_pred_unlabeled (List[ndarray]): predicted unlabeled data (each ndarray has N rows)
@@ -103,9 +105,9 @@ def ptd_bootstrap(algorithm, data_truth, data_pred, data_pred_unlabeled, w=None,
     if tuning_method is None:
         tuning_matrix = np.identity(d)
     else:
-        cross_cov_calibration = np.cov(np.concatenate((coeff_calibration_list.T, coeff_pred_calibration_list.T)))[:d, d:]
-        cov_pred_calibration = np.cov(coeff_pred_calibration_list.T)
-        cov_pred_unlabeled = np.cov(coeff_pred_unlabeled_list.T)
+        cross_cov_calibration = np.atleast_2d(np.cov(np.concatenate((coeff_calibration_list.T, coeff_pred_calibration_list.T)))[:d, d:])
+        cov_pred_calibration = np.atleast_2d(np.cov(coeff_pred_calibration_list.T))
+        cov_pred_unlabeled = np.atleast_2d(np.cov(coeff_pred_unlabeled_list.T))
         if tuning_method == "optimal":
             tuning_matrix = cross_cov_calibration @ np.linalg.inv(cov_pred_calibration + cov_pred_unlabeled)
         elif tuning_method == "optimal_diagonal":
@@ -188,3 +190,57 @@ def classical_linear_regression_ci(X, Y, w=None, alpha=0.05):
     se = regression.HC0_se
     ci = _zconfint_generic(coeff, se, alpha, alternative="two-sided")
     return (ci[0], ci[1])
+
+'''
+LOGISTIC REGRESSION
+'''
+
+def algorithm_logistic_regression(data, w):
+    X, Y = data
+    regression = GLM(endog=Y, exog=X, freq_weights=w, family=Binomial(link=Logit())).fit()
+    coeff = regression.params
+    return coeff
+
+def ptd_logistic_regression(X, Xhat, Xhat_unlabeled, Y, Yhat, Yhat_unlabeled, w=None, w_unlabeled=None, B=2000, alpha=0.05, tuning_method='optimal_diagonal'):
+    """
+    Computes tuning matrix, point estimates, and confidence intervals for logistic regression coefficients using the Predict-then-Debias bootstrap algorithm. 
+    
+    Args:
+        X (ndarray): ground truth covariates in labeled data (dimensions n x p)
+        Xhat (ndarray): predicted covariates in labeled data (dimensions n x p)
+        Xhat_unlabeled (ndarray): predicted covariates in unlabeled data (dimensions N x p)
+        Y (ndarray): ground truth response variable in labeled data (dimensions n x 1)
+        Yhat (ndarray): predicted response variable in labeled data (dimensions n x 1)
+        Yhat_unlabeled (ndarray): predicted response variable in unlabeled data (dimensions N x 1)
+        w (ndarray, optional): sample weights for labeled data (length n)
+        w_unlabeled (ndarray, optional): sample weights for unlabeled data (length N)
+        B (int, optional): number of bootstrap steps
+        alpha (float, optional): error level (must be in the range (0, 1)). The PTD confidence interval will target a coverage of 1 - alpha. 
+        tuning_method (str, optional): method used to create the tuning matrix: "optimal_diagonal", "optimal", or None. (If tuning_method is None, the identity matrix is used.) 
+        
+    Returns:
+        ndarray: the tuning matrix (dimensions d x d) computed from the selected tuning method
+        ndarray: PTD point estimate of the regression coefficients (length d)
+        tuple: lower and upper bounds of PTD confidence intervals with (1-alpha) coverage
+    """
+    data_truth = [X, Y]
+    data_pred = [Xhat, Yhat]
+    data_pred_unlabeled = [Xhat_unlabeled, Yhat_unlabeled]
+    return ptd_bootstrap(algorithm_logistic_regression, data_truth, data_pred, data_pred_unlabeled, w=w, w_unlabeled=w_unlabeled, B=B, alpha=alpha, tuning_method=tuning_method)
+
+def classical_logistic_regression_ci(X, Y, w=None, alpha=0.05):
+    """
+    Computes confidence intervals for logistic regression coefficients using the classical method.
+
+    Args:
+        X (ndarray): labeled covariates (dimensions n x p)
+        Y (ndarray): labeled responses (length n)
+        w (ndarray, optional): sample weights for the labeled dataset (length n)
+        alpha (float, optional): error level (must be in the range (0, 1)). Confidence interval will target a coverage of 1 - alpha.
+
+    Returns:
+        tuple: lower and upper bounds of classical confidence intervals for the coefficients
+    """
+    regression = GLM(endog=Y, exog=X, freq_weights=w, family=Binomial(link=Logit())).fit()
+    ci = regression.conf_int(alpha=alpha).T
+    return ci
