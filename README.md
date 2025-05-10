@@ -2,7 +2,7 @@
 
 This repository contains methods for leveraging large scale machine learning predictions in downstream statistical inference when a small number of labelled calibration samples are available. The package has functions that implement the Predict-Then-Debias bootstrap algorithm from the paper referenced below. 
 
-See the ptd.py for the functions that can be used to run the Predict-Then-Debias bootstrap and "Predict-Then-Debias examples.ipynb" for four examples demonstrating how to use these functions.
+See the "ptd.py" file for the functions that can be used to run the Predict-Then-Debias bootstrap and the "Predict-Then-Debias examples.ipynb" file for four examples demonstrating how to use these functions.
 
 
 ## Citations
